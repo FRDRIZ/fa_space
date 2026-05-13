@@ -8,7 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:battery_plus/battery_plus.dart';
-import '../../firebase_options.dart';
+import '../firebase_options.dart';
 
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
