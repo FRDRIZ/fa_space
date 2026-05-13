@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1065463394539",
+    "project_id": "faspace-80905",
+    "storage_bucket": "faspace-80905.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1065463394539:android:9fded1fb715f9911d0ceae",
+        "android_client_info": {
+          "package_name": "com.farid.faspace.fa_space"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDT_RUaZU3F7oBtWem-atUD6tni35Nx9hw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

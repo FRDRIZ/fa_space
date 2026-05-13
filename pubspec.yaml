@@ -1,0 +1,44 @@
+name: fa_space
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0' # Kita paksa ke versi 3 agar aman di Flutter 3.11
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # Backend & Auth
+  firebase_core: ^3.1.1
+  cloud_firestore: ^5.0.2
+  firebase_auth: ^5.1.1
+
+  # Sensors & Utilities
+  geolocator: ^12.0.0
+  battery_plus: ^6.0.0
+  intl: ^0.19.0
+  provider: ^6.1.2
+  flutter_background_service: ^5.0.7
+  device_info_plus: ^10.1.0
+  url_launcher: ^6.3.2
+  flutter_local_notifications: ^21.0.0
+
+  # AI & UI
+  google_generative_ai: ^0.4.0
+  table_calendar: ^3.1.2
+  cupertino_icons: ^1.0.8
+
+  # Maps Gratis (Scratch) - SUDAH DIRAPIKAN
+  flutter_map: ^6.1.0
+  latlong2: ^0.9.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
