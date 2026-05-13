@@ -297,7 +297,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
               // --- SECTION 5: PERIOD TRACKER ---
               Card(
-                color: Colors.redAccent.withOpacity(0.1),
+                color: const Color.fromARGB(255, 163, 95, 144).withOpacity(0.1),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                 child: ListTile(
                   leading: const Icon(Icons.calendar_month, color: Colors.redAccent),
