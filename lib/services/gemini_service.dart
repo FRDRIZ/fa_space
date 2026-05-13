@@ -1,32 +1,99 @@
+import 'dart:convert';
 import 'package:google_generative_ai/google_generative_ai.dart';
 
 class GeminiService {
-  // PASTE API KEY KAMU DI SINI
-  static const _apiKey = 'AIzaSyCvZLgwteXbct7TkJVgSv9YDr9Ed5dsCyk';
+  static const String _apiKey = 'AIzaSyA7VFIoz8ZX9w3N28Xiv4D_9Qobnyhix18';
 
-  static Future<String> getMediatorAdvice(String masalah) async {
-    // Pakai model Gemini 1.5 Flash (Cepat & Hemat Kuota)
-    final model = GenerativeModel(model: 'gemini-1.5-flash', apiKey: _apiKey);
-    
-    final prompt = """
-    Kamu adalah mediator hubungan profesional bernama 'FA Mediator'.
-    User sedang mengalami konflik: '$masalah'.
-    
-    Tugasmu:
-    1. Berikan analisis singkat kenapa masalah ini bisa terjadi (empati ke keduanya).
-    2. Berikan saran konkret untuk Farid agar lebih mengerti Aura.
-    3. Berikan saran konkret untuk Aura agar lebih tenang menghadapi Farid.
-    
-    Gunakan bahasa gaul anak muda Indonesia yang santai, bijak, dan tidak memihak.
-    Jangan terlalu formal, tapi harus tetap berbobot.
-    """;
+  Future<Map<String, dynamic>> getResolution(String problem) async {
+    final model = GenerativeModel(
+      model: 'gemini-2.5-flash',
+      apiKey: _apiKey,
+      systemInstruction: Content.system('''
+        You are an expert in relationship conflict resolution.
+        Analyze the problem and provide a JSON response with the following keys exactly:
+        - root_cause: Analysis of why this happened.
+        - perspectives: Analysis of the feelings from both sides.
+        - suggestion: What is the best and calmest way to say or resolve this.
+        - avoid: What NOT to do or say.
+        Return ONLY valid JSON format without any markdown blocks.
+      '''),
+    );
+
+    final prompt = 'Problem: $problem';
 
     try {
-      final content = [Content.text(prompt)];
-      final response = await model.generateContent(content);
-      return response.text ?? "Aduh, koneksi AI-nya lagi putus nih. Mungkin ini tandanya kalian harus baikan manual? 😊";
+      final response = await model.generateContent([Content.text(prompt)]);
+
+      String rawText = response.text ?? '{}';
+      rawText = rawText.replaceAll('```json', '').replaceAll('```', '').trim();
+
+      return jsonDecode(rawText);
     } catch (e) {
-      return "Error: Kamu mungkin belum pasang API Key atau kuotanya habis. Pesan error: $e";
+      print('Error calling Gemini: $e');
+      throw Exception('Gagal mendapatkan solusi dari AI: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> analyzeConflict({
+    required String description,
+    required String mood,
+    required int daysTogether,
+    required String userPov,
+    required String partnerPov,
+  }) async {
+    final model = GenerativeModel(
+      model: 'gemini-2.5-flash',
+      apiKey: _apiKey,
+      systemInstruction: Content.system('''
+You are a relationship conflict resolution expert for a couple app called FA Space.
+
+The person currently speaking is $userPov. Their partner is $partnerPov.
+Always analyze perspectives from these two sides: $userPov (the one telling the story) and $partnerPov (their partner).
+
+Your job is to analyze relationship conflicts and give structured, empathetic advice.
+
+IMPORTANT RULES:
+- Always be warm, non-judgmental, and balanced
+- Never take one side
+- Use simple Indonesian language (lo/gue style, casual)
+- Keep each section concise (2-4 sentences max)
+- suggested_message must be a ready-to-send Indonesian message written from $userPov's point of view (no quotes inside)
+- perspective_user = $userPov's feelings/perspective
+- perspective_partner = $partnerPov's feelings/perspective
+
+CLASSIFY the conflict into one of these labels:
+ghosting | communication | jealousy | trust | distance | habit | other
+
+OUTPUT FORMAT (strict JSON only, absolutely no markdown, no extra text):
+{
+  "label": "...",
+  "label_emoji": "...",
+  "root_cause": "...",
+  "perspective_user": "...",
+  "perspective_partner": "...",
+  "suggested_message": "...",
+  "what_to_avoid": "...",
+  "next_step": "..."
+}
+'''),
+    );
+
+    final userPrompt = '''
+conflict_description: "$description"
+
+Analyze this conflict and respond ONLY with the JSON format above. No markdown, no backticks.
+''';
+
+    try {
+      final response = await model.generateContent([Content.text(userPrompt)]);
+
+      String rawText = response.text ?? '{}';
+      rawText = rawText.replaceAll('```json', '').replaceAll('```', '').trim();
+
+      return jsonDecode(rawText);
+    } catch (e) {
+      print('Error calling Gemini: $e');
+      throw Exception('Gagal menganalisis konflik: $e');
     }
   }
 }
