@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -53,47 +54,112 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
-  
-  // --- LOGIC MOOD STREAK ---
-  Future<int> getMoodStreak() async {
-    var snapshot = await FirebaseFirestore.instance
-        .collection('moods')
-        .orderBy('timestamp', descending: true)
-        .limit(30)
-        .get();
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  int _currentStreak = 0;
+  bool _isLoadingStreak = true;
 
-    int streak = 0;
-    DateTime? lastDate;
+  // Variabel animasi maps
+  final MapController _mapController = MapController();
+  ll.LatLng? _animatedPos;
+  AnimationController? _movementController;
+  Tween<double>? _latTween;
+  Tween<double>? _lngTween;
 
-    for (var doc in snapshot.docs) {
-      final data = doc.data();
-      if (!data.containsKey('label') || data['timestamp'] == null) continue;
-      
-      String mood = data['label'] ?? '';
-      DateTime currentDate = (data['timestamp'] as Timestamp).toDate();
-      DateTime normalizedCurrent = DateTime(currentDate.year, currentDate.month, currentDate.day);
+  @override
+  void initState() {
+    super.initState();
+    _refreshMoodStreak();
+  }
 
-      if (mood.toLowerCase() == 'happy') {
-        if (lastDate == null) {
-          streak = 1;
-          lastDate = normalizedCurrent;
-        } else {
-          int diff = lastDate.difference(normalizedCurrent).inDays;
-          if (diff == 1) {
-            streak++;
-            lastDate = normalizedCurrent;
-          } else if (diff == 0) {
-            continue; 
-          } else {
-            break; 
-          }
-        }
-      } else {
-        if (streak > 0) break;
-      }
+  @override
+  void dispose() {
+    _movementController?.dispose();
+    _mapController.dispose();
+    super.dispose();
+  }
+
+  void _animateMarkerAndMap(double targetLat, double targetLng) {
+    if (_animatedPos == null) {
+      setState(() {
+        _animatedPos = ll.LatLng(targetLat, targetLng);
+      });
+      return;
     }
-    return streak;
+
+    _movementController?.dispose();
+    _movementController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    );
+
+    _latTween = Tween<double>(begin: _animatedPos!.latitude, end: targetLat);
+    _lngTween = Tween<double>(begin: _animatedPos!.longitude, end: targetLng);
+
+    Animation<double> animation = CurvedAnimation(
+      parent: _movementController!,
+      curve: Curves.easeInOutCubic,
+    );
+
+    _movementController!.addListener(() {
+      if (_latTween != null && _lngTween != null) {
+        final newPos = ll.LatLng(_latTween!.evaluate(animation), _lngTween!.evaluate(animation));
+        setState(() {
+          _animatedPos = newPos;
+        });
+        _mapController.move(newPos, _mapController.camera.zoom);
+      }
+    });
+
+    _movementController!.forward();
+  }
+
+  Future<void> _refreshMoodStreak() async {
+    setState(() => _isLoadingStreak = true);
+    try {
+      var snapshot = await FirebaseFirestore.instance
+          .collection('moods')
+          .orderBy('timestamp', descending: true)
+          .limit(30)
+          .get();
+
+      int streak = 0;
+      DateTime? lastDate;
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        if (!data.containsKey('label') || data['timestamp'] == null) continue;
+        
+        String mood = data['label'] ?? '';
+        DateTime currentDate = (data['timestamp'] as Timestamp).toDate();
+        DateTime normalizedCurrent = DateTime(currentDate.year, currentDate.month, currentDate.day);
+
+        if (mood.toLowerCase() == 'happy') {
+          if (lastDate == null) {
+            streak = 1;
+            lastDate = normalizedCurrent;
+          } else {
+            int diff = lastDate.difference(normalizedCurrent).inDays;
+            if (diff == 1) {
+              streak++;
+              lastDate = normalizedCurrent;
+            } else if (diff == 0) {
+              continue; 
+            } else {
+              break; 
+            }
+          }
+        } else {
+          if (streak > 0) break;
+        }
+      }
+      setState(() {
+        _currentStreak = streak;
+        _isLoadingStreak = false;
+      });
+    } catch (e) {
+      debugPrint("Gagal mengambil streak: $e");
+      setState(() => _isLoadingStreak = false);
+    }
   }
 
   @override
@@ -108,31 +174,39 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const AddPlanScreen()),
-            ),
+            ).then((_) => setState(() {})),
           ),
         ],
       ),
       body: StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance.collection('status').doc('farid').snapshots(),
         builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(child: Text('Error: ${snapshot.error}'));
+          }
           if (!snapshot.hasData || !snapshot.data!.exists) {
             return const Center(child: CircularProgressIndicator());
           }
 
           final statusData = snapshot.data!.data() as Map<String, dynamic>?;
 
-          var lastSeenRaw = statusData?['lastSeen'];
-          DateTime lastSeen = (lastSeenRaw != null && lastSeenRaw is Timestamp) 
-              ? lastSeenRaw.toDate() 
-              : DateTime.now();
-
           int battery = statusData?['battery'] ?? 0;
           bool isCharging = statusData?['isCharging'] ?? false;
 
-          double? lat = (statusData != null && statusData.containsKey('lat')) 
-              ? statusData['lat']?.toDouble() : null;
-          double? lng = (statusData != null && statusData.containsKey('lng')) 
-              ? statusData['lng']?.toDouble() : null;
+          double? rawLat = (statusData != null && statusData.containsKey('lat')) 
+              ? double.tryParse(statusData['lat'].toString()) : null;
+          double? rawLng = (statusData != null && statusData.containsKey('lng')) 
+              ? double.tryParse(statusData['lng'].toString()) : null;
+
+          if (rawLat != null && rawLng != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (_animatedPos == null || 
+                  _animatedPos!.latitude != rawLat || 
+                  _animatedPos!.longitude != rawLng) {
+                _animateMarkerAndMap(rawLat, rawLng);
+              }
+            });
+          }
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -152,36 +226,28 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 10),
                       
-                      // WIDGET MOOD STREAK
-                      FutureBuilder<int>(
-                        future: getMoodStreak(),
-                        builder: (context, streakSnapshot) {
-                          if (streakSnapshot.hasData && streakSnapshot.data! > 0) {
-                            return Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(20),
+                      if (!_isLoadingStreak && _currentStreak > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text("🔥", style: TextStyle(fontSize: 16)),
+                              const SizedBox(width: 4),
+                              Text(
+                                "$_currentStreak Days Happy Streak!",
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.orange.shade900,
+                                ),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Text("🔥", style: TextStyle(fontSize: 16)),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    "${streakSnapshot.data} Days Happy Streak!",
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.orange.shade900,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }
-                          return const SizedBox.shrink();
-                        },
-                      ),
+                            ],
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -194,64 +260,53 @@ class _HomeScreenState extends State<HomeScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                 child: Padding(
                   padding: const EdgeInsets.all(20),
-                  child: Column(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text("Farid's Phone", style: TextStyle(fontSize: 14, color: Colors.grey)),
-                              const SizedBox(height: 5),
-                              Text(
-                                isCharging ? "⚡ Charging..." : "🔋 On Battery",
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                              ),
-                            ],
+                          const Text("Farid's Phone", style: TextStyle(fontSize: 14, color: Colors.grey)),
+                          const SizedBox(height: 5),
+                          Text(
+                            isCharging ? "⚡ Charging..." : "🔋 On Battery",
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                           ),
-                          Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              CircularProgressIndicator(
-                                value: battery / 100,
-                                color: battery < 20 ? Colors.red : Colors.green,
-                                strokeWidth: 6,
-                              ),
-                              Text("$battery%", style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                            ],
-                          )
                         ],
                       ),
-                      const Divider(height: 30),
-                      Row(
+                      Stack(
+                        alignment: Alignment.center,
                         children: [
-                          const Icon(Icons.history, size: 20, color: Colors.blue),
-                          const SizedBox(width: 10),
-                          Text("Last Seen: ${DateFormat('HH:mm').format(lastSeen)} WIB"),
+                          CircularProgressIndicator(
+                            value: battery / 100,
+                            color: battery < 20 ? Colors.red : Colors.green,
+                            strokeWidth: 6,
+                          ),
+                          Text("$battery%", style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                         ],
-                      ),
+                      )
                     ],
                   ),
                 ),
               ),
               const SizedBox(height: 24),
 
-              // --- SECTION 3: ZENLY STYLE MAPS (OSM) ---
+              // --- SECTION 3: MAPS (SMOOTH AVATAR MOVEMENT) ---
               const Text("Where is Farid?", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
               Container(
-                height: 300,
+                height: 350,
                 clipBehavior: Clip.antiAlias, 
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(20),
-                  boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
+                  boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)],
                 ),
-                child: (lat != null && lng != null)
+                child: (_animatedPos != null)
                     ? FlutterMap(
+                        mapController: _mapController, 
                         options: MapOptions(
-                          initialCenter: ll.LatLng(lat, lng), 
-                          initialZoom: 15,
+                          initialCenter: _animatedPos!, 
+                          initialZoom: 16,
                         ),
                         children: [
                           TileLayer(
@@ -261,13 +316,29 @@ class _HomeScreenState extends State<HomeScreen> {
                           MarkerLayer(
                             markers: [
                               Marker(
-                                point: ll.LatLng(lat, lng),
-                                width: 80,
-                                height: 80,
-                                child: const Icon(
-                                  Icons.location_on,
-                                  color: Colors.redAccent,
-                                  size: 45,
+                                point: _animatedPos!,
+                                width: 70,
+                                height: 70,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.pinkAccent, width: 3),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.pinkAccent.withOpacity(0.5),
+                                        blurRadius: 12,
+                                        spreadRadius: 4,
+                                      )
+                                    ],
+                                  ),
+                                  child: const ClipRRect(
+                                    borderRadius: BorderRadius.all(Radius.circular(35)),
+                                    child: Image(
+                                      image: AssetImage('assets/images/farid_profile.png'), 
+                                      fit: BoxFit.cover, // FIX: Diganti dari BoxCover ke BoxFit
+                                      errorBuilder: _avatarErrorBuilder, 
+                                    ),
+                                  ),
                                 ),
                               ),
                             ],
@@ -275,7 +346,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       )
                     : Container(
-                        color: Colors.grey[200],
+                        color: Colors.grey.shade200,
                         child: const Center(child: Text("Waiting for location...")),
                       ),
               ),
@@ -314,44 +385,54 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 24),
 
+              // --- SECTION 6: MONTHLY PLANS ---
+              const Text("Coming Soon Plans 📅", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('plans')
+                    .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(DateTime.now()))
+                    .orderBy('date', descending: false)
+                    .limit(3)
+                    .snapshots(),
+                builder: (context, planSnapshot) {
+                  if (planSnapshot.hasError) {
+                    return const Text(
+                      "Gagal memuat rencana. Pastikan Index Firestore sudah dibuat.", 
+                      style: TextStyle(color: Colors.red, fontSize: 12),
+                    );
+                  }
+                  if (!planSnapshot.hasData) return const LinearProgressIndicator();
+                  
+                  var plans = planSnapshot.data!.docs;
+                  if (plans.isEmpty) return const Text("No upcoming plans yet.", style: TextStyle(color: Colors.grey));
 
-              // --- SECTION: MONTHLY PLANS (COMING SOON) ---
-const Text("Coming Soon Plans 📅", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-const SizedBox(height: 10),
-StreamBuilder<QuerySnapshot>(
-  stream: FirebaseFirestore.instance
-      .collection('plans')
-      .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(DateTime.now()))
-      .orderBy('date', descending: false)
-      .limit(3)
-      .snapshots(),
-  builder: (context, planSnapshot) {
-    if (!planSnapshot.hasData) return const LinearProgressIndicator();
-    
-    var plans = planSnapshot.data!.docs;
-    if (plans.isEmpty) return const Text("No upcoming plans yet.", style: TextStyle(color: Colors.grey));
+                  return Column(
+                    children: plans.map((doc) {
+                      final planData = doc.data() as Map<String, dynamic>?;
+                      if (planData == null || planData['date'] == null) return const SizedBox.shrink();
 
-    return Column(
-      children: plans.map((doc) {
-        DateTime date = (doc['date'] as Timestamp).toDate();
-        return Card(
-          child: ListTile(
-            leading: const Icon(Icons.event, color: Colors.pinkAccent),
-            title: Text(doc['title']),
-            subtitle: Text(DateFormat('EEEE, dd MMMM').format(date)),
-            trailing: IconButton(
-              icon: const Icon(Icons.check_circle_outline),
-              onPressed: () => doc.reference.delete(), // Hapus kalau sudah selesai
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  },
-),
-const SizedBox(height: 24),
+                      DateTime date = (planData['date'] as Timestamp).toDate();
+                      String title = planData['title'] ?? 'No Title';
 
-              // --- SECTION 6: CONFLICT RESOLUTION ---
+                      return Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.event, color: Colors.pinkAccent),
+                          title: Text(title),
+                          subtitle: Text(DateFormat('EEEE, dd MMMM').format(date)),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.check_circle_outline),
+                            onPressed: () => doc.reference.delete(),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  );
+                },
+              ),
+              const SizedBox(height: 24),
+
+              // --- SECTION 7: CONFLICT RESOLUTION ---
               ElevatedButton.icon(
                 onPressed: () => Navigator.push(
                   context, MaterialPageRoute(builder: (context) => const ConflictScreen())
@@ -373,14 +454,16 @@ const SizedBox(height: 24),
 
   Widget _moodButton(BuildContext context, String emoji, String label) {
     return InkWell(
-      onTap: () {
-        FirebaseFirestore.instance.collection('moods').add({
+      onTap: () async {
+        await FirebaseFirestore.instance.collection('moods').add({
           'emoji': emoji,
           'label': label,
           'timestamp': FieldValue.serverTimestamp(),
         });
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Mood $label sent!")));
-        setState(() {}); // Refresh untuk update streak 🔥
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Mood $label sent!")));
+        }
+        _refreshMoodStreak(); 
       },
       child: Column(
         children: [
@@ -390,4 +473,11 @@ const SizedBox(height: 24),
       ),
     );
   }
+}
+
+Widget _avatarErrorBuilder(BuildContext context, Object error, StackTrace? stackTrace) {
+  return Container(
+    color: Colors.pink.shade100,
+    child: const Icon(Icons.person, size: 40, color: Colors.pink),
+  );
 }
