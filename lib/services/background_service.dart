@@ -8,12 +8,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:battery_plus/battery_plus.dart';
-import 'package:screen_state/screen_state.dart'; // Import package baru
 import '../firebase_options.dart';
 
-// Variabel global di dalam isolate background untuk menyimpan status layar
-bool _isScreenOn = true; 
-StreamSubscription<ScreenStateEvent>? _screenSubscription;
+DateTime? _lastUpdateTime;
 
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
@@ -63,37 +60,17 @@ void onStart(ServiceInstance service) async {
     service.setAsForegroundService();
   }
 
-  service.on('stopService').listen((event) {
-    _screenSubscription?.cancel(); // Bersihkan listener saat service mati
-    service.stopSelf();
-  });
+  service.on('stopService').listen((event) => service.stopSelf());
 
-  // --- LOGIKA DETEKSI LAYAR HP (FIXED) ---
-  try {
-    Screen _screen = Screen();
-    _screenSubscription = _screen.screenStateStream?.listen((ScreenStateEvent event) {
-      // Menggunakan properti bawaan enum atau konversi ke string untuk mencocokkan nilainya
-      String eventString = event.toString();
-      
-      if (eventString.contains('SCREEN_ON') || eventString.contains('SCREEN_UNLOCKED')) {
-        _isScreenOn = true;
-        debugPrint("QA Log: Layar HP Menyala / Unlocked");
-      } else if (eventString.contains('SCREEN_OFF')) {
-        _isScreenOn = false;
-        debugPrint("QA Log: Layar HP Mati / Locked");
-      }
-    });
-  } catch (e) {
-    debugPrint("QA Log: Gagal menginisialisasi Screen State Sensor: $e");
-  }
+  // Set waktu awal mula service berjalan
+  _lastUpdateTime = DateTime.now();
 
   // Jalankan update pertama kali
   await _sendUpdate(battery, service);
 
-  // Listener baterai dicolok
   battery.onBatteryStateChanged.listen((_) => _sendUpdate(battery, service));
 
-  // Timer interval update rutin (ganti ke 10 atau 15 detik agar responsif)
+  // Timer interval update rutin setiap 15 detik
   Timer.periodic(const Duration(seconds: 15), (timer) async {
     await _sendUpdate(battery, service);
   });
@@ -102,6 +79,23 @@ void onStart(ServiceInstance service) async {
 Future<void> _sendUpdate(Battery battery, ServiceInstance service) async {
   try {
     double? lat, lng;
+    DateTime now = DateTime.now();
+    bool shouldUpdateLastSeen = true;
+
+    // --- LOGIKA DETERMINASI TIMING LAYAR (FIXED) ---
+    if (_lastUpdateTime != null) {
+      int differenceInSeconds = now.difference(_lastUpdateTime!).inSeconds;
+      
+      if (differenceInSeconds > 25) {
+        shouldUpdateLastSeen = false;
+        debugPrint("QA Log: Android Background tersendat ($differenceInSeconds detik), layar terindikasi MATI.");
+      }
+    }
+    
+    // PERBAIKAN: Hanya update tracker waktu jika eksekusinya lancar (artinya layar beneran aktif)
+    if (shouldUpdateLastSeen) {
+      _lastUpdateTime = now;
+    }
 
     int level = await battery.batteryLevel;
     BatteryState state = await battery.batteryState;
@@ -128,11 +122,10 @@ Future<void> _sendUpdate(Battery battery, ServiceInstance service) async {
       if (lng != null) 'lng': lng,
       'battery': level,
       'isCharging': state == BatteryState.charging,
-      // Cek di sini: Jika _isScreenOn true, kirim serverTimestamp. Jika false, field lastSeen tidak akan ikut di-update (mempertahankan data lama)
-      if (_isScreenOn) 'lastSeen': FieldValue.serverTimestamp(),
+      if (shouldUpdateLastSeen) 'lastSeen': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 
-    debugPrint("QA Log: Update berhasil. Status Layar Aktif = $_isScreenOn");
+    debugPrint("QA Log: Update Berhasil. Update LastSeen = $shouldUpdateLastSeen");
   } catch (e) {
     debugPrint("QA Log: Update Gagal: $e");
   }
