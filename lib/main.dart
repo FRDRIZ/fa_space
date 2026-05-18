@@ -54,46 +54,63 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  
-  // --- LOGIC MOOD STREAK ---
-  Future<int> getMoodStreak() async {
-    var snapshot = await FirebaseFirestore.instance
-        .collection('moods')
-        .orderBy('timestamp', descending: true)
-        .limit(30)
-        .get();
+  int _currentStreak = 0;
+  bool _isLoadingStreak = true;
 
-    int streak = 0;
-    DateTime? lastDate;
+  @override
+  void initState() {
+    super.initState();
+    _refreshMoodStreak();
+  }
 
-    for (var doc in snapshot.docs) {
-      final data = doc.data();
-      if (!data.containsKey('label') || data['timestamp'] == null) continue;
-      
-      String mood = data['label'] ?? '';
-      DateTime currentDate = (data['timestamp'] as Timestamp).toDate();
-      DateTime normalizedCurrent = DateTime(currentDate.year, currentDate.month, currentDate.day);
+  // Mengambil mood streak secara mandiri agar tidak terpicu oleh StreamBuilder utama
+  Future<void> _refreshMoodStreak() async {
+    setState(() => _isLoadingStreak = true);
+    try {
+      var snapshot = await FirebaseFirestore.instance
+          .collection('moods')
+          .orderBy('timestamp', descending: true)
+          .limit(30)
+          .get();
 
-      if (mood.toLowerCase() == 'happy') {
-        if (lastDate == null) {
-          streak = 1;
-          lastDate = normalizedCurrent;
-        } else {
-          int diff = lastDate.difference(normalizedCurrent).inDays;
-          if (diff == 1) {
-            streak++;
+      int streak = 0;
+      DateTime? lastDate;
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        if (!data.containsKey('label') || data['timestamp'] == null) continue;
+        
+        String mood = data['label'] ?? '';
+        DateTime currentDate = (data['timestamp'] as Timestamp).toDate();
+        DateTime normalizedCurrent = DateTime(currentDate.year, currentDate.month, currentDate.day);
+
+        if (mood.toLowerCase() == 'happy') {
+          if (lastDate == null) {
+            streak = 1;
             lastDate = normalizedCurrent;
-          } else if (diff == 0) {
-            continue; 
           } else {
-            break; 
+            int diff = lastDate.difference(normalizedCurrent).inDays;
+            if (diff == 1) {
+              streak++;
+              lastDate = normalizedCurrent;
+            } else if (diff == 0) {
+              continue; 
+            } else {
+              break; 
+            }
           }
+        } else {
+          if (streak > 0) break;
         }
-      } else {
-        if (streak > 0) break;
       }
+      setState(() {
+        _currentStreak = streak;
+        _isLoadingStreak = false;
+      });
+    } catch (e) {
+      debugPrint("Gagal mengambil streak: $e");
+      setState(() => _isLoadingStreak = false);
     }
-    return streak;
   }
 
   @override
@@ -108,13 +125,16 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const AddPlanScreen()),
-            ),
+            ).then((_) => setState(() {})), // Refresh data plan saat kembali
           ),
         ],
       ),
       body: StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance.collection('status').doc('farid').snapshots(),
         builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(child: Text('Error: ${snapshot.error}'));
+          }
           if (!snapshot.hasData || !snapshot.data!.exists) {
             return const Center(child: CircularProgressIndicator());
           }
@@ -130,9 +150,9 @@ class _HomeScreenState extends State<HomeScreen> {
           bool isCharging = statusData?['isCharging'] ?? false;
 
           double? lat = (statusData != null && statusData.containsKey('lat')) 
-              ? statusData['lat']?.toDouble() : null;
+              ? double.tryParse(statusData['lat'].toString()) : null;
           double? lng = (statusData != null && statusData.containsKey('lng')) 
-              ? statusData['lng']?.toDouble() : null;
+              ? double.tryParse(statusData['lng'].toString()) : null;
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -152,36 +172,29 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 10),
                       
-                      // WIDGET MOOD STREAK
-                      FutureBuilder<int>(
-                        future: getMoodStreak(),
-                        builder: (context, streakSnapshot) {
-                          if (streakSnapshot.hasData && streakSnapshot.data! > 0) {
-                            return Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(20),
+                      // WIDGET MOOD STREAK (Lebih hemat data karena tidak pakai FutureBuilder di dalam Stream)
+                      if (!_isLoadingStreak && _currentStreak > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text("🔥", style: TextStyle(fontSize: 16)),
+                              const SizedBox(width: 4),
+                              Text(
+                                "$_currentStreak Days Happy Streak!",
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.orange.shade900,
+                                ),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Text("🔥", style: TextStyle(fontSize: 16)),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    "${streakSnapshot.data} Days Happy Streak!",
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.orange.shade900,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }
-                          return const SizedBox.shrink();
-                        },
-                      ),
+                            ],
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -245,7 +258,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 clipBehavior: Clip.antiAlias, 
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(20),
-                  boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
+                  boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)],
                 ),
                 child: (lat != null && lng != null)
                     ? FlutterMap(
@@ -314,44 +327,54 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 24),
 
+              // --- SECTION 6: MONTHLY PLANS ---
+              const Text("Coming Soon Plans 📅", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('plans')
+                    .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(DateTime.now()))
+                    .orderBy('date', descending: false)
+                    .limit(3)
+                    .snapshots(),
+                builder: (context, planSnapshot) {
+                  if (planSnapshot.hasError) {
+                    return const Text(
+                      "Gagal memuat rencana. Pastikan Index Firestore sudah dibuat.", 
+                      style: TextStyle(color: Colors.red, fontSize: 12),
+                    );
+                  }
+                  if (!planSnapshot.hasData) return const LinearProgressIndicator();
+                  
+                  var plans = planSnapshot.data!.docs;
+                  if (plans.isEmpty) return const Text("No upcoming plans yet.", style: TextStyle(color: Colors.grey));
 
-              // --- SECTION: MONTHLY PLANS (COMING SOON) ---
-const Text("Coming Soon Plans 📅", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-const SizedBox(height: 10),
-StreamBuilder<QuerySnapshot>(
-  stream: FirebaseFirestore.instance
-      .collection('plans')
-      .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(DateTime.now()))
-      .orderBy('date', descending: false)
-      .limit(3)
-      .snapshots(),
-  builder: (context, planSnapshot) {
-    if (!planSnapshot.hasData) return const LinearProgressIndicator();
-    
-    var plans = planSnapshot.data!.docs;
-    if (plans.isEmpty) return const Text("No upcoming plans yet.", style: TextStyle(color: Colors.grey));
+                  return Column(
+                    children: plans.map((doc) {
+                      final planData = doc.data() as Map<String, dynamic>?;
+                      if (planData == null || planData['date'] == null) return const SizedBox.shrink();
 
-    return Column(
-      children: plans.map((doc) {
-        DateTime date = (doc['date'] as Timestamp).toDate();
-        return Card(
-          child: ListTile(
-            leading: const Icon(Icons.event, color: Colors.pinkAccent),
-            title: Text(doc['title']),
-            subtitle: Text(DateFormat('EEEE, dd MMMM').format(date)),
-            trailing: IconButton(
-              icon: const Icon(Icons.check_circle_outline),
-              onPressed: () => doc.reference.delete(), // Hapus kalau sudah selesai
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  },
-),
-const SizedBox(height: 24),
+                      DateTime date = (planData['date'] as Timestamp).toDate();
+                      String title = planData['title'] ?? 'No Title';
 
-              // --- SECTION 6: CONFLICT RESOLUTION ---
+                      return Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.event, color: Colors.pinkAccent),
+                          title: Text(title),
+                          subtitle: Text(DateFormat('EEEE, dd MMMM').format(date)),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.check_circle_outline),
+                            onPressed: () => doc.reference.delete(),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  );
+                },
+              ),
+              const SizedBox(height: 24),
+
+              // --- SECTION 7: CONFLICT RESOLUTION ---
               ElevatedButton.icon(
                 onPressed: () => Navigator.push(
                   context, MaterialPageRoute(builder: (context) => const ConflictScreen())
@@ -373,14 +396,16 @@ const SizedBox(height: 24),
 
   Widget _moodButton(BuildContext context, String emoji, String label) {
     return InkWell(
-      onTap: () {
-        FirebaseFirestore.instance.collection('moods').add({
+      onTap: () async {
+        await FirebaseFirestore.instance.collection('moods').add({
           'emoji': emoji,
           'label': label,
           'timestamp': FieldValue.serverTimestamp(),
         });
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Mood $label sent!")));
-        setState(() {}); // Refresh untuk update streak 🔥
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Mood $label sent!")));
+        }
+        _refreshMoodStreak(); // Hanya me-refresh streak secara manual saat tombol ditekan
       },
       child: Column(
         children: [

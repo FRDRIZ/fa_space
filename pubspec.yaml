@@ -35,6 +35,7 @@ dependencies:
   flutter_map: ^6.1.0
   latlong2: ^0.9.1
   flutter_dotenv: ^6.0.1
+  screen_state: ^5.0.0
 
 dev_dependencies:
   flutter_test:
