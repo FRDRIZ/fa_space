@@ -14,6 +14,7 @@ import 'services/background_service.dart';
 import 'ui/screens/add_plan_screen.dart'; 
 import 'ui/screens/conflict_screen.dart';
 import 'ui/screens/period_tracker.dart';
+import 'ui/screens/plan_calendar_view.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -78,6 +79,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     super.dispose();
   }
 
+  // FIX: Mengoptimalkan pergerakan animasi marker agar tidak berbenturan dengan render peta
   void _animateMarkerAndMap(double targetLat, double targetLng) {
     if (_animatedPos == null) {
       setState(() {
@@ -88,7 +90,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     _movementController?.dispose();
     _movementController = AnimationController(
-      duration: const Duration(milliseconds: 1000),
+      duration: const Duration(milliseconds: 1200), // Sedikit diperlambat agar transisi transparan & smooth
       vsync: this,
     );
 
@@ -97,18 +99,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     Animation<double> animation = CurvedAnimation(
       parent: _movementController!,
-      curve: Curves.easeInOutCubic,
+      curve: Curves.easeInOutQuad, // Mengganti ke Quad untuk pergerakan interpolasi yang lebih stabil
     );
 
     _movementController!.addListener(() {
       if (_latTween != null && _lngTween != null) {
-        final newPos = ll.LatLng(_latTween!.evaluate(animation), _lngTween!.evaluate(animation));
         setState(() {
-          _animatedPos = newPos;
+          _animatedPos = ll.LatLng(_latTween!.evaluate(animation), _lngTween!.evaluate(animation));
         });
-        _mapController.move(newPos, _mapController.camera.zoom);
       }
     });
+
+    // Geser kamera peta secara smooth sekali saja di awal koordinat baru masuk, tidak mengunci di listener
+    _mapController.move(ll.LatLng(targetLat, targetLng), _mapController.camera.zoom);
 
     _movementController!.forward();
   }
@@ -179,6 +182,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ],
       ),
       body: StreamBuilder<DocumentSnapshot>(
+        // Memantau document koordinat & status user secara live stream
         stream: FirebaseFirestore.instance.collection('status').doc('farid').snapshots(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
@@ -192,6 +196,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
           int battery = statusData?['battery'] ?? 0;
           bool isCharging = statusData?['isCharging'] ?? false;
+          String photoUrl = statusData?['photoUrl'] ?? ''; // 🔥 Ambil data photoUrl dari database
 
           double? rawLat = (statusData != null && statusData.containsKey('lat')) 
               ? double.tryParse(statusData['lat'].toString()) : null;
@@ -201,8 +206,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           if (rawLat != null && rawLng != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (_animatedPos == null || 
-                  _animatedPos!.latitude != rawLat || 
-                  _animatedPos!.longitude != rawLng) {
+                  _latTween?.end != rawLat || 
+                  _lngTween?.end != rawLng) {
                 _animateMarkerAndMap(rawLat, rawLng);
               }
             });
@@ -291,7 +296,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
               const SizedBox(height: 24),
 
-              // --- SECTION 3: MAPS (SMOOTH AVATAR MOVEMENT) ---
+              // --- SECTION 3: MAPS (SMOOTH AVATAR MOVEMENT + LIVE PHOTO) ---
               const Text("Where is Farid?", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
               Container(
@@ -317,28 +322,49 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             markers: [
                               Marker(
                                 point: _animatedPos!,
-                                width: 70,
-                                height: 70,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.pinkAccent, width: 3),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.pinkAccent.withOpacity(0.5),
-                                        blurRadius: 12,
-                                        spreadRadius: 4,
-                                      )
-                                    ],
-                                  ),
-                                  child: const ClipRRect(
-                                    borderRadius: BorderRadius.all(Radius.circular(35)),
-                                    child: Image(
-                                      image: AssetImage('assets/images/farid_profile.png'), 
-                                      fit: BoxFit.cover, // FIX: Diganti dari BoxCover ke BoxFit
-                                      errorBuilder: _avatarErrorBuilder, 
+                                width: 75,
+                                height: 75,
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    // Efek bayangan pink melingkar di bawah avatar marker
+                                    Container(
+                                      width: 68,
+                                      height: 68,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: Colors.pinkAccent.withOpacity(0.25),
+                                      ),
                                     ),
-                                  ),
+                                    // Bingkai avatar warna putih solid + pink accent
+                                    Container(
+                                      padding: const EdgeInsets.all(3),
+                                      decoration: const BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                        boxShadow: [
+                                          BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 3))
+                                        ],
+                                      ),
+                                      child: CircleAvatar(
+                                        radius: 26,
+                                        backgroundColor: Colors.pink.shade100,
+                                        // FIX: Menampilkan gambar dinamis dari Cloud URL jika tersedia, fallback ke Aset Lokal jika kosong
+                                        backgroundImage: photoUrl.isNotEmpty
+                                            ? NetworkImage(photoUrl) as ImageProvider
+                                            : const AssetImage('assets/images/farid_profile.png'),
+                                      ),
+                                    ),
+                                    // Pin indikator arah lokasi di paling bawah marker
+                                    Positioned(
+                                      bottom: 0,
+                                      child: Icon(
+                                        Icons.arrow_drop_down, 
+                                        color: Colors.pinkAccent.shade400, 
+                                        size: 26
+                                      ),
+                                    )
+                                  ],
                                 ),
                               ),
                             ],
@@ -414,12 +440,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
                       DateTime date = (planData['date'] as Timestamp).toDate();
                       String title = planData['title'] ?? 'No Title';
+                      bool isWithAura = planData['type'] == 'with_aura';
 
                       return Card(
+                        color: isWithAura ? Colors.pink.shade50 : Colors.white,
                         child: ListTile(
-                          leading: const Icon(Icons.event, color: Colors.pinkAccent),
-                          title: Text(title),
+                          leading: Icon(
+                            isWithAura ? Icons.favorite : Icons.event, 
+                            color: isWithAura ? Colors.pink : Colors.pinkAccent
+                          ),
+                          title: Text(
+                            title, 
+                            style: TextStyle(fontWeight: isWithAura ? FontWeight.bold : FontWeight.normal)
+                          ),
                           subtitle: Text(DateFormat('EEEE, dd MMMM').format(date)),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const PlanCalendarView()),
+                            );
+                          },
                           trailing: IconButton(
                             icon: const Icon(Icons.check_circle_outline),
                             onPressed: () => doc.reference.delete(),
