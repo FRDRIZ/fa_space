@@ -3,7 +3,7 @@ import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class GeminiService {
-  static final String _apiKey = dotenv.env['GEMINI_API_KEY'] ?? '';
+  static final String _apiKey = "GEMINI_API";
 
   Future<Map<String, dynamic>> getResolution(String problem) async {
     final model = GenerativeModel(
